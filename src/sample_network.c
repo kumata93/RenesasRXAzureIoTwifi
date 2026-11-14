@@ -77,7 +77,7 @@ UINT    status;
     if (status)
     {
         LOG_TERMINAL("IP ADDRESS SET FAIL.\r\n");
-        return 0;
+        return (status);
     }
 
     status = nx_ip_gateway_address_set(ip_ptr, ip_cfg.gateway);
@@ -86,6 +86,8 @@ UINT    status;
     if (status)
     {
         LOG_TERMINAL("IP GATEWAY ADDRESS SET FAIL.\r\n");
-        return 0;
+        return (status);
     }
+
+    return (NX_SUCCESS);
 }

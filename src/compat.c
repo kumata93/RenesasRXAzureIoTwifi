@@ -17,13 +17,28 @@
 
 int32_t az_platform_clock_msec(int64_t* out_clock_msec)
 {
-    return 0u;
+    if (out_clock_msec == NULL)
+    {
+        return -1;
+    }
+
+    *out_clock_msec = ((int64_t)tx_time_get() * 1000LL) / (int64_t)TX_TIMER_TICKS_PER_SECOND;
+    return 0;
 }
 
 
 int32_t az_platform_sleep_msec(int32_t milliseconds)
 {
-    return 0u;
+    if (milliseconds > 0)
+    {
+        ULONG ticks = (ULONG)(((uint64_t)milliseconds * TX_TIMER_TICKS_PER_SECOND + 999ULL) / 1000ULL);
+        if (ticks == 0)
+        {
+            ticks = 1;
+        }
+        tx_thread_sleep(ticks);
+    }
+    return 0;
 }
 
 #if 0

@@ -367,7 +367,12 @@ NXD_ADDRESS proxy_server_address;
         return;
     }
 #elif defined(SAMPLE_NETWORK_CONFIGURE)
-    SAMPLE_NETWORK_CONFIGURE(&ip_0, &dns_server_address[0]);
+    status = SAMPLE_NETWORK_CONFIGURE(&ip_0, &dns_server_address[0]);
+    if (status)
+    {
+        LOG_TERMINAL("Failed to configure network: %u\r\n", status);
+        return;
+    }
 #else
     nx_ip_gateway_address_set(&ip_0, SAMPLE_GATEWAY_ADDRESS);
 #endif /* SAMPLE_DHCP_DISABLE  */

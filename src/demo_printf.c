@@ -54,19 +54,23 @@ void demo_printf_init(void)
 void demo_printf(char *format, ...)
 {
     va_list v_args;
+    int ret;
     size_t len;
 
     tx_mutex_get(&demo_printf_mutex, TX_WAIT_FOREVER);
 
     va_start(v_args, format);
-
-    len = (size_t)vsnprintf(&demo_printf_buf[0], sizeof(demo_printf_buf), format, v_args);
-
-    R_SCI_Send(Console,(uint8_t *)demo_printf_buf,len);
-
+    ret = vsnprintf(&demo_printf_buf[0], sizeof(demo_printf_buf), format, v_args);
     va_end(v_args);
 
-    tx_semaphore_get(&demo_printf_semaphore, TX_WAIT_FOREVER);
+    if (ret > 0)
+    {
+        len = ((size_t)ret >= sizeof(demo_printf_buf)) ? (sizeof(demo_printf_buf) - 1U) : (size_t)ret;
+        if (SCI_SUCCESS == R_SCI_Send(Console, (uint8_t *)demo_printf_buf, (uint16_t)len))
+        {
+            tx_semaphore_get(&demo_printf_semaphore, TX_TIMER_TICKS_PER_SECOND);
+        }
+    }
 
     tx_mutex_put(&demo_printf_mutex);
 }
@@ -83,10 +87,11 @@ void demo_printf_transmit_end(void * pArgs)
 void my_sw_charput_function(char c)
 {
     tx_mutex_get(&demo_printf_mutex, TX_WAIT_FOREVER);
-    
-    R_SCI_Send(Console,&c,1);
-    
-    tx_semaphore_get(&demo_printf_semaphore, TX_WAIT_FOREVER);
+
+    if (SCI_SUCCESS == R_SCI_Send(Console, (uint8_t *)&c, 1))
+    {
+        tx_semaphore_get(&demo_printf_semaphore, TX_TIMER_TICKS_PER_SECOND);
+    }
 
     tx_mutex_put(&demo_printf_mutex);
 

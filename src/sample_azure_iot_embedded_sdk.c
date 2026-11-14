@@ -393,7 +393,11 @@ UINT loop = NX_TRUE;
     {
 
         /* Connection monitor.  */
-        sample_connection_monitor(ip_ptr, &iothub_client, sample_connection_status, sample_initialize_iothub);
+        if (sample_connection_status != NX_SUCCESS)
+        {
+            sample_connection_monitor(ip_ptr, &iothub_client, sample_connection_status, sample_initialize_iothub);
+            sample_connection_status = NX_SUCCESS;
+        }
 
         tx_thread_sleep(NX_IP_PERIODIC_RATE);
     }
@@ -527,6 +531,7 @@ NX_PACKET *packet_ptr;
         if ((status = nx_azure_iot_hub_client_telemetry_message_create(&iothub_client, &packet_ptr, NX_WAIT_FOREVER)))
         {
             printf("Telemetry message create failed!: error code = 0x%08x\r\n", status);
+            tx_thread_sleep(NX_IP_PERIODIC_RATE);
             continue;
         }
 
@@ -549,15 +554,18 @@ NX_PACKET *packet_ptr;
         if (status)
         {
             nx_azure_iot_hub_client_telemetry_message_delete(packet_ptr);
+            tx_thread_sleep(NX_IP_PERIODIC_RATE);
             continue;
         }
 
         buffer_length = (UINT)snprintf(buffer, sizeof(buffer), "{\"Message ID\":%u}", i++);
-        if (nx_azure_iot_hub_client_telemetry_send(&iothub_client, packet_ptr,
-                                                   (UCHAR *)buffer, buffer_length, NX_WAIT_FOREVER))
+        if ((status = nx_azure_iot_hub_client_telemetry_send(&iothub_client, packet_ptr,
+                                                             (UCHAR *)buffer, buffer_length, NX_WAIT_FOREVER)))
         {
             printf("Telemetry message send failed!: error code = 0x%08x\r\n", status);
             nx_azure_iot_hub_client_telemetry_message_delete(packet_ptr);
+            sample_connection_status = status;
+            tx_thread_sleep(NX_IP_PERIODIC_RATE);
             continue;
         }
         printf("Telemetry message send: %s.\r\n", buffer);
@@ -590,6 +598,8 @@ const UCHAR *property_buf;
         if ((status = nx_azure_iot_hub_client_cloud_message_receive(&iothub_client, &packet_ptr, NX_WAIT_FOREVER)))
         {
             printf("C2D receive failed!: error code = 0x%08x\r\n", status);
+            sample_connection_status = status;
+            tx_thread_sleep(NX_IP_PERIODIC_RATE);
             continue;
         }
 
@@ -639,6 +649,8 @@ VOID *context_ptr;
                                                                             &packet_ptr, NX_WAIT_FOREVER)))
         {
             printf("Direct method receive failed!: error code = 0x%08x\r\n", status);
+            sample_connection_status = status;
+            tx_thread_sleep(NX_IP_PERIODIC_RATE);
             continue;
         }
 
@@ -653,6 +665,8 @@ VOID *context_ptr;
         {
             printf("Direct method response failed!: error code = 0x%08x\r\n", status);
             nx_packet_release(packet_ptr);
+            sample_connection_status = status;
+            tx_thread_sleep(NX_IP_PERIODIC_RATE);
             continue;
         }
 
@@ -688,12 +702,16 @@ ULONG reported_property_version;
             if ((status = nx_azure_iot_hub_client_device_twin_properties_request(&iothub_client, NX_WAIT_FOREVER)))
             {
                 printf("device twin document request failed!: error code = 0x%08x\r\n", status);
+                sample_connection_status = status;
+                tx_thread_sleep(NX_IP_PERIODIC_RATE);
                 continue;
             }
 
             if ((status = nx_azure_iot_hub_client_device_twin_properties_receive(&iothub_client, &packet_ptr, NX_WAIT_FOREVER)))
             {
                 printf("device twin document receive failed!: error code = 0x%08x\r\n", status);
+                sample_connection_status = status;
+                tx_thread_sleep(NX_IP_PERIODIC_RATE);
                 continue;
             }
 
@@ -708,6 +726,8 @@ ULONG reported_property_version;
                                                                                      NX_WAIT_FOREVER)))
         {
             printf("Receive desired property receive failed!: error code = 0x%08x\r\n", status);
+            sample_connection_status = status;
+            tx_thread_sleep(NX_IP_PERIODIC_RATE);
             continue;
         }
 
@@ -723,6 +743,8 @@ ULONG reported_property_version;
                                                                                    NX_WAIT_FOREVER)))
         {
             printf("Device twin reported properties failed!: error code = 0x%08x\r\n", status);
+            sample_connection_status = status;
+            tx_thread_sleep(NX_IP_PERIODIC_RATE);
             continue;
         }
 

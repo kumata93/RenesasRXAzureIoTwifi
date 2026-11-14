@@ -23,6 +23,7 @@
 /* Indicate that driver source is being compiled.  */
 
 #include <nx_driver_rx_wifi.h>
+#include <string.h>
 
 #ifndef NX_ENABLE_TCPIP_OFFLOAD
 #error "NX_ENABLE_TCPIP_OFFLOAD must be defined to use this driver"

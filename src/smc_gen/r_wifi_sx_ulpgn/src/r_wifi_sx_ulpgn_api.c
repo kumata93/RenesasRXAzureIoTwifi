@@ -1280,12 +1280,14 @@ int32_t R_WIFI_SX_ULPGN_SendSocket(uint8_t socket_number, uint8_t * data, uint32
         /* Take mutex */
         if (E_OK != mutex_take(MUTEX_RX))
         {
-            return WIFI_ERR_TAKE_MUTEX;
+            api_ret = WIFI_ERR_TAKE_MUTEX;
+            goto RELEASE_MUTEX;
         }
 
         /* change to next socket index */
         if (E_OK != change_socket_index(socket_number))
         {
+            mutex_give(MUTEX_RX);
             api_ret = WIFI_ERR_CHANGE_SOCKET;
             goto RELEASE_MUTEX;
         }
@@ -1330,7 +1332,19 @@ int32_t R_WIFI_SX_ULPGN_SendSocket(uint8_t socket_number, uint8_t * data, uint32
             {
                 break;
             }
+            if (0 < timeout_ms)
+            {
+                tick_tmp = os_wrap_tickcount_get() - g_sock_tbl[socket_number].timer_tx.tick_sta;
+                if (g_sock_tbl[socket_number].timer_tx.threshold <= tick_tmp)
+                {
+                    break;
+                }
+            }
             os_wrap_sleep(1, UNIT_TICK);
+        }
+        if (0 == g_uart_tbl[g_data_port].tx_end_flag)
+        {
+            break;
         }
         send_idx += send_length;
 
@@ -1343,7 +1357,10 @@ int32_t R_WIFI_SX_ULPGN_SendSocket(uint8_t socket_number, uint8_t * data, uint32
                 break;
             }
         }
-        os_wrap_sleep(1, UNIT_TICK);
+        if (send_idx < length)
+        {
+            os_wrap_sleep(1, UNIT_TICK);
+        }
     }
     api_ret = send_idx;
 
@@ -1403,17 +1420,22 @@ int32_t R_WIFI_SX_ULPGN_ReceiveSocket(uint8_t socket_number, uint8_t * data, uin
 
     if (socket_number != g_now_sock_idx)
     {
-        /* Take mutex */
-        if (E_OK != mutex_take(MUTEX_TX))
+        /* Release MUTEX_RX and re-acquire in canonical order (TX -> RX) to avoid AB-BA deadlock */
+        mutex_give(MUTEX_RX);
+        if (E_OK != mutex_take(MUTEX_TX | MUTEX_RX))
         {
             return WIFI_ERR_TAKE_MUTEX;
         }
 
-        /* change to next socket index */
-        if (E_OK != change_socket_index(socket_number))
+        if (socket_number != g_now_sock_idx)
         {
-            api_ret = WIFI_ERR_CHANGE_SOCKET;
-            goto RELEASE_MUTEX;
+            /* change to next socket index */
+            if (E_OK != change_socket_index(socket_number))
+            {
+                mutex_give(MUTEX_TX);
+                api_ret = WIFI_ERR_CHANGE_SOCKET;
+                goto RELEASE_MUTEX;
+            }
         }
         mutex_give(MUTEX_TX);
     }
@@ -2623,18 +2645,25 @@ static wifi_err_t mutex_create(void)
  *********************************************************************************************************************/
 static int32_t mutex_take(uint8_t mutex_flag)
 {
+    uint8_t acquired = 0;
+
     if (0 != (mutex_flag & MUTEX_TX))
     {
         if (OS_WRAP_SUCCESS != os_wrap_mutex_take(&s_binary_sem_tx, s_sem_block_time, CALL_NOT_ISR))
         {
             return E_FAIL;
         }
+        acquired |= MUTEX_TX;
     }
 
     if (0 != (mutex_flag & MUTEX_RX))
     {
         if (OS_WRAP_SUCCESS != os_wrap_mutex_take(&s_binary_sem_rx, s_sem_block_time, CALL_NOT_ISR))
         {
+            if (0 != (acquired & MUTEX_TX))
+            {
+                os_wrap_mutex_give(&s_binary_sem_tx, CALL_NOT_ISR);
+            }
             return E_FAIL;
         }
     }

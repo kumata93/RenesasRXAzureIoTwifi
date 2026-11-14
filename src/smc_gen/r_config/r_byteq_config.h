@@ -61,9 +61,9 @@ Configuration Options
 #define BYTEQ_CFG_MAX_CTRL_BLKS             (32)
 
 /* Selects to use disable interrupt to protect queue. */
-#define BYTEQ_CFG_PROTECT_QUEUE             (0)
+#define BYTEQ_CFG_PROTECT_QUEUE             (1)
 
 /* Selects to use disable interrupt to protect critical section. */
-#define BYTEQ_CFG_CRITICAL_SECTION          (0)
+#define BYTEQ_CFG_CRITICAL_SECTION          (1)
 
 #endif /* BYTEQ_CONFIG_H */

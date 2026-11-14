@@ -1009,15 +1009,26 @@ NX_PACKET_POOL *pool_ptr = nx_driver_information.nx_driver_information_packet_po
 
     for (;;)
     {
-        
-        /* Obtain the IP internal mutex before processing the IP event.  */
-        tx_mutex_get(&(ip_ptr -> nx_ip_protection), TX_WAIT_FOREVER);
-
-        /* Loop through TCP socket.  */
         for (i = 0; i < NX_DRIVER_SOCKETS_MAXIMUM; i++)
         {
-            if ((nx_driver_sockets[i].socket_ptr == NX_NULL) ||
-                (nx_driver_sockets[i].remote_port == 0))
+            VOID *socket_ptr;
+            UINT socket_id;
+            UINT protocol;
+            ULONG sock_local_ip;
+            ULONG sock_remote_ip;
+            USHORT sock_remote_port;
+
+            /* Snapshot socket metadata under IP protection mutex.  */
+            tx_mutex_get(&(ip_ptr -> nx_ip_protection), TX_WAIT_FOREVER);
+            socket_ptr = nx_driver_sockets[i].socket_ptr;
+            socket_id = nx_driver_sockets[i].socket_id;
+            protocol = nx_driver_sockets[i].protocol;
+            sock_local_ip = nx_driver_sockets[i].local_ip;
+            sock_remote_ip = nx_driver_sockets[i].remote_ip;
+            sock_remote_port = nx_driver_sockets[i].remote_port;
+            tx_mutex_put(&(ip_ptr -> nx_ip_protection));
+
+            if ((socket_ptr == NX_NULL) || (sock_remote_port == 0))
             {
 
                 /* Skip sockets not used.  */
@@ -1025,14 +1036,14 @@ NX_PACKET_POOL *pool_ptr = nx_driver_information.nx_driver_information_packet_po
             }
 
             /* Set packet type.  */
-            if (nx_driver_sockets[i].protocol == NX_PROTOCOL_TCP)
+            if (protocol == NX_PROTOCOL_TCP)
             {
                 packet_type = NX_TCP_PACKET;
             }
             else
             {
                 packet_type = NX_UDP_PACKET;
-            } 
+            }
 
             /* Loop to receive all data on current socket.  */
             for (;;)
@@ -1047,31 +1058,45 @@ NX_PACKET_POOL *pool_ptr = nx_driver_information.nx_driver_information_packet_po
                 /* Get available size of packet.  */
                 data_length = (uint16_t)(packet_ptr -> nx_packet_data_end - packet_ptr -> nx_packet_prepend_ptr);
 
-                /* Receive data without suspending.  */
-                size = R_WIFI_SX_ULPGN_ReceiveSocket(nx_driver_sockets[i].socket_id, (uint8_t*)(packet_ptr -> nx_packet_prepend_ptr),
+                /* Receive data without holding ip_ptr->nx_ip_protection.  */
+                size = R_WIFI_SX_ULPGN_ReceiveSocket(socket_id, (uint8_t*)(packet_ptr -> nx_packet_prepend_ptr),
                                                      data_length, 10);
-
-                if (size < 0)
-                {
-
-                    /* Connection error. Notify upper layer with Null packet.  */
-                    if (nx_driver_sockets[i].protocol == NX_PROTOCOL_TCP)
-                    {
-                        _nx_tcp_socket_driver_packet_receive(nx_driver_sockets[i].socket_ptr, NX_NULL);
-                    }
-                    else
-                    {
-                        _nx_udp_socket_driver_packet_receive(nx_driver_sockets[i].socket_ptr, NX_NULL,
-                                                                      NX_NULL, NX_NULL, 0);
-                    }
-                    nx_packet_release(packet_ptr);
-                    break;
-                }
 
                 if (size == 0)
                 {
 
                     /* No incoming data.  */
+                    nx_packet_release(packet_ptr);
+                    break;
+                }
+
+                /* Re-acquire IP protection mutex before delivering packet or error.  */
+                tx_mutex_get(&(ip_ptr -> nx_ip_protection), TX_WAIT_FOREVER);
+
+                /* Verify socket was not closed/reassigned while mutex was released.  */
+                if ((nx_driver_sockets[i].socket_ptr != socket_ptr) ||
+                    (nx_driver_sockets[i].socket_id != socket_id) ||
+                    (nx_driver_sockets[i].remote_port == 0))
+                {
+                    tx_mutex_put(&(ip_ptr -> nx_ip_protection));
+                    nx_packet_release(packet_ptr);
+                    break;
+                }
+
+                if (size < 0)
+                {
+
+                    /* Connection error. Notify upper layer with Null packet.  */
+                    if (protocol == NX_PROTOCOL_TCP)
+                    {
+                        _nx_tcp_socket_driver_packet_receive(socket_ptr, NX_NULL);
+                    }
+                    else
+                    {
+                        _nx_udp_socket_driver_packet_receive(socket_ptr, NX_NULL,
+                                                             NX_NULL, NX_NULL, 0);
+                    }
+                    tx_mutex_put(&(ip_ptr -> nx_ip_protection));
                     nx_packet_release(packet_ptr);
                     break;
                 }
@@ -1082,29 +1107,28 @@ NX_PACKET_POOL *pool_ptr = nx_driver_information.nx_driver_information_packet_po
                 packet_ptr -> nx_packet_ip_interface = interface_ptr;
 
                 /* Pass it to NetXDuo.  */
-                if (nx_driver_sockets[i].protocol == NX_PROTOCOL_TCP)
+                if (protocol == NX_PROTOCOL_TCP)
                 {
-                    _nx_tcp_socket_driver_packet_receive(nx_driver_sockets[i].socket_ptr, packet_ptr);
+                    _nx_tcp_socket_driver_packet_receive(socket_ptr, packet_ptr);
                 }
                 else
                 {
 
                     /* Convert IP version.  */
                     remote_ip.nxd_ip_version = NX_IP_VERSION_V4;
-                    remote_ip.nxd_ip_address.v4 = nx_driver_sockets[i].remote_ip;
+                    remote_ip.nxd_ip_address.v4 = sock_remote_ip;
                     local_ip.nxd_ip_version = NX_IP_VERSION_V4;
-                    local_ip.nxd_ip_address.v4 = nx_driver_sockets[i].local_ip;
+                    local_ip.nxd_ip_address.v4 = sock_local_ip;
 
-                    _nx_udp_socket_driver_packet_receive(nx_driver_sockets[i].socket_ptr,
-                                                                  packet_ptr, &local_ip, &remote_ip,
-                                                                  nx_driver_sockets[i].remote_port);
+                    _nx_udp_socket_driver_packet_receive(socket_ptr,
+                                                         packet_ptr, &local_ip, &remote_ip,
+                                                         sock_remote_port);
                 }
+
+                tx_mutex_put(&(ip_ptr -> nx_ip_protection));
             }
         }
-        
-        /* Release the IP internal mutex before processing the IP event.  */
-        tx_mutex_put(&(ip_ptr -> nx_ip_protection));
-        
+
         /* Sleep some ticks to next loop.  */
         tx_thread_sleep(NX_DRIVER_THREAD_INTERVAL);
     }
@@ -1182,7 +1206,8 @@ int32_t socket_id;
             if (nx_driver_sockets[i].socket_ptr == NX_NULL)
             {
 
-                /* Find an empty entry.  */
+                /* Find an empty entry and clear stale fields.  */
+                memset(&nx_driver_sockets[i], 0, sizeof(NX_DRIVER_SOCKET));
                 nx_driver_sockets[i].socket_ptr = socket_ptr;
                 break;
             }
@@ -1208,6 +1233,7 @@ int32_t socket_id;
         socket_id = R_WIFI_SX_ULPGN_CreateSocket(WIFI_SOCKET_IP_PROTOCOL_TCP, WIFI_SOCKET_IP_VERSION_4);
         if(socket_id < 0)
         {
+            nx_driver_sockets[i].socket_ptr = NX_NULL;
             return(NX_NOT_SUCCESSFUL);
         }
 
@@ -1219,6 +1245,8 @@ int32_t socket_id;
 
         if (status)
         {
+            R_WIFI_SX_ULPGN_CloseSocket(socket_id);
+            nx_driver_sockets[i].socket_ptr = NX_NULL;
             return(NX_NOT_SUCCESSFUL);
         }
 
@@ -1227,19 +1255,24 @@ int32_t socket_id;
         nx_driver_sockets[i].local_port = local_port;
         nx_driver_sockets[i].remote_port = *remote_port;
         nx_driver_sockets[i].protocol = NX_PROTOCOL_TCP;
+        status = NX_SUCCESS;
         break;
 
     case NX_TCPIP_OFFLOAD_TCP_SOCKET_DISCONNECT:
         i = (UINT)(((NX_TCP_SOCKET *)socket_ptr) -> nx_tcp_socket_tcpip_offload_context);
-        if (nx_driver_sockets[i].remote_port)
+        if (i < NX_DRIVER_SOCKETS_MAXIMUM)
         {
+            if (nx_driver_sockets[i].remote_port)
+            {
 
-            /* Disconnect.  */
-            status = R_WIFI_SX_ULPGN_CloseSocket(nx_driver_sockets[i].socket_id);
+                /* Disconnect.  */
+                R_WIFI_SX_ULPGN_CloseSocket(nx_driver_sockets[i].socket_id);
+            }
+
+            /* Reset socket to free this entry.  */
+            memset(&nx_driver_sockets[i], 0, sizeof(NX_DRIVER_SOCKET));
         }
-
-        /* Reset socket to free this entry.  */
-        nx_driver_sockets[i].socket_ptr = NX_NULL;
+        status = NX_SUCCESS;
         break;
 
     case NX_TCPIP_OFFLOAD_UDP_SOCKET_BIND:
@@ -1262,61 +1295,82 @@ int32_t socket_id;
     case NX_TCPIP_OFFLOAD_UDP_SOCKET_UNBIND: 
 
     	i = (UINT)(((NX_UDP_SOCKET *)socket_ptr) -> nx_udp_socket_tcpip_offload_context);
+        if (i < NX_DRIVER_SOCKETS_MAXIMUM)
+        {
+            if (nx_driver_sockets[i].remote_port)
+            {
 
-		if (nx_driver_sockets[i].remote_port)
-		{
-
-			/* Disconnect.  */
-			status = R_WIFI_SX_ULPGN_CloseSocket(nx_driver_sockets[i].socket_id);
+                /* Disconnect.  */
+                R_WIFI_SX_ULPGN_CloseSocket(nx_driver_sockets[i].socket_id);
 
 #ifdef NX_DEBUG
-			printf("UDP socket %u unbind port: %u\r\n", i, local_port);
+                printf("UDP socket %u unbind port: %u\r\n", i, local_port);
 #endif
-		}
+            }
 
-		/* Reset socket to free this entry.  */
-		nx_driver_sockets[i].socket_ptr = NX_NULL;
-
+            /* Reset socket to free this entry.  */
+            memset(&nx_driver_sockets[i], 0, sizeof(NX_DRIVER_SOCKET));
+        }
+        status = NX_SUCCESS;
         break;
 
     case NX_TCPIP_OFFLOAD_UDP_SOCKET_SEND:
-/* Store the index of driver socket.  */
-		((NX_UDP_SOCKET *)socket_ptr) -> nx_udp_socket_tcpip_offload_context = (VOID *)i;
+        i = (UINT)(((NX_UDP_SOCKET *)socket_ptr) -> nx_udp_socket_tcpip_offload_context);
+        if (i >= NX_DRIVER_SOCKETS_MAXIMUM)
+        {
+            return(NX_NOT_SUCCESSFUL);
+        }
 
-		/* Create the socket. */
-		socket_id = R_WIFI_SX_ULPGN_CreateSocket(WIFI_SOCKET_IP_PROTOCOL_UDP, WIFI_SOCKET_IP_VERSION_4);
-		if(socket_id < 0)
-		{
-			return(NX_NOT_SUCCESSFUL);
-		}
+        /* If destination changed on an already-connected UDP socket, close the previous hardware socket. */
+        if ((nx_driver_sockets[i].remote_port != 0) &&
+            ((nx_driver_sockets[i].remote_ip != remote_ip -> nxd_ip_address.v4) ||
+             (nx_driver_sockets[i].remote_port != *remote_port)))
+        {
+            R_WIFI_SX_ULPGN_CloseSocket(nx_driver_sockets[i].socket_id);
+            nx_driver_sockets[i].remote_port = 0;
+        }
 
-		/* Set the socket id.  */
-		nx_driver_sockets[i].socket_id = socket_id;
+        if (nx_driver_sockets[i].remote_port == 0)
+        {
+            /* Create the socket. */
+            socket_id = R_WIFI_SX_ULPGN_CreateSocket(WIFI_SOCKET_IP_PROTOCOL_UDP, WIFI_SOCKET_IP_VERSION_4);
+            if(socket_id < 0)
+            {
+                return(NX_NOT_SUCCESSFUL);
+            }
 
-		/* Connect.  */
-		status = R_WIFI_SX_ULPGN_ConnectSocket(nx_driver_sockets[i].socket_id, remote_ip -> nxd_ip_address.v4, *remote_port, NULL);
+            /* Set the socket id.  */
+            nx_driver_sockets[i].socket_id = socket_id;
 
-		if (status)
-		{
-			return(NX_NOT_SUCCESSFUL);
-		}
+            /* Connect.  */
+            status = R_WIFI_SX_ULPGN_ConnectSocket(nx_driver_sockets[i].socket_id, remote_ip -> nxd_ip_address.v4, *remote_port, NULL);
 
+            if (status)
+            {
+                R_WIFI_SX_ULPGN_CloseSocket(socket_id);
+                return(NX_NOT_SUCCESSFUL);
+            }
 
-		nx_driver_sockets[i].local_ip = local_ip -> nxd_ip_address.v4;
-		nx_driver_sockets[i].remote_ip = remote_ip -> nxd_ip_address.v4;
-		nx_driver_sockets[i].local_port = local_port;
-		nx_driver_sockets[i].remote_port = *remote_port;
-		nx_driver_sockets[i].protocol = NX_PROTOCOL_UDP;
+            nx_driver_sockets[i].local_ip = local_ip -> nxd_ip_address.v4;
+            nx_driver_sockets[i].remote_ip = remote_ip -> nxd_ip_address.v4;
+            nx_driver_sockets[i].local_port = local_port;
+            nx_driver_sockets[i].remote_port = *remote_port;
+            nx_driver_sockets[i].protocol = NX_PROTOCOL_UDP;
+        }
 
-		/* Convert wait option from ticks to ms.  */
-		if (wait_option > (NX_DRIVER_SOCKET_SEND_TIMEOUT_MAXIMUM / 1000 * NX_IP_PERIODIC_RATE))
-		{
-			wait_option = NX_DRIVER_SOCKET_SEND_TIMEOUT_MAXIMUM;
-		}
-		else
-		{
-			wait_option = wait_option / NX_IP_PERIODIC_RATE * 1000;
-		}
+        /* Convert wait option from ticks to ms.  */
+        if (wait_option > (NX_DRIVER_SOCKET_SEND_TIMEOUT_MAXIMUM / 1000 * NX_IP_PERIODIC_RATE))
+        {
+            wait_option = NX_DRIVER_SOCKET_SEND_TIMEOUT_MAXIMUM;
+        }
+        else
+        {
+            wait_option = (wait_option * 1000) / NX_IP_PERIODIC_RATE;
+            if (wait_option == 0)
+            {
+                wait_option = 1;
+            }
+        }
 
 		/* Send data.  */
 		sent_size = R_WIFI_SX_ULPGN_SendSocket(nx_driver_sockets[i].socket_id,
@@ -1349,7 +1403,11 @@ int32_t socket_id;
         }
         else
         {
-            wait_option = wait_option / NX_IP_PERIODIC_RATE * 1000;
+            wait_option = (wait_option * 1000) / NX_IP_PERIODIC_RATE;
+            if (wait_option == 0)
+            {
+                wait_option = 1;
+            }
         }
 
         /* Loop to send the packet.  */
@@ -1442,7 +1500,8 @@ UINT status;
 UINT priority = 0;
 
     /* Get priority of IP thread.  */
-    tx_thread_info_get(tx_thread_identify(), NX_NULL, NX_NULL, NX_NULL, &priority,
+    tx_thread_info_get(&(driver_req_ptr -> nx_ip_driver_ptr -> nx_ip_thread),
+                       NX_NULL, NX_NULL, NX_NULL, &priority,
                        NX_NULL, NX_NULL, NX_NULL, NX_NULL);
 
     /* Create the driver thread.  */

@@ -131,3 +131,13 @@ TLS (NetX Secure) や MQTT、DNS、SNTP などの上位プロトコルは MCU �
 2. **GCC `-Os` 最適化時のリンカオプション**: 最適化レベルを `-Os` にする場合、リンカの User defined options に `-Wl,--no-gc-sections` を追加してください。
 3. **リンカスクリプトの `_end` 配置**: `src/linker_script.ld` の `.bss` セクション末尾に `_end = .;` が配置されていることを確認してください。
 4. **Smart Configurator の SCI ピン設定**: 古いバージョンの e2 studio / Smart Configurator では、SCI のピン機能が `SMISOx`/`SMOSIx` になる場合があるため、`RXDx`/`TXDx` になっているか確認してください（e2 studio 2023-04 / Smart Configurator 2.17 以降で修正済み）。
+
+---
+
+## 7. ライセンス・セキュリティ・コントリビューション
+
+- **ライセンス**: Azure RTOS 関連ファイルは [LICENSE.txt](LICENSE.txt) および [LICENSED-HARDWARE.txt](LICENSED-HARDWARE.txt)、Renesas FIT モジュール等は各ソースコードのヘッダ記載ライセンスに従います。
+- **変更履歴**: [CHANGELOG.md](CHANGELOG.md)
+- **コントリビューション**: [CONTRIBUTING.md](CONTRIBUTING.md)（認証情報をコミットしないための注意点やビルド手順を記載）
+- **セキュリティ**: [SECURITY.md](SECURITY.md)
+
